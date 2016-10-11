@@ -36,12 +36,13 @@ VPNKEYFILE="vpn_private.key"
 VPNCRTFILE="vpn_public.crt"
 
 echo "Delete this message (Ctrl-K), paste in the StartSSL PRIVATE KEY, then save and exit (Ctrl-O, Ctrl-X)" > "/tmp/${VPNKEYFILE}"
-nano "/tmp/${VPNKEYFILE}"
+vim "/tmp/${VPNKEYFILE}"
 
 echo "Delete this message (Ctrl-K), paste in the StartSSL CERTIFICATE, then save and exit (Ctrl-O, Ctrl-X)" > "/tmp/${VPNCRTFILE}"
-nano "/tmp/${VPNCRTFILE}"
+vim "/tmp/${VPNCRTFILE}"
 
-VPNIPPOOL="10.10.10.0/24"
+VPNIPPOOL="10.31.2.0/24"
+ELASTIC_IP="118.193.207.78"
 
 
 
@@ -70,56 +71,21 @@ echo
 # https://wiki.strongswan.org/projects/strongswan/wiki/ForwardingAndSplitTunneling
 # https://www.zeitgeist.se/2013/11/26/mtu-woes-in-ipsec-tunnels-how-to-fix/
 
-iptables -P INPUT   ACCEPT
-iptables -P FORWARD ACCEPT
-iptables -P OUTPUT  ACCEPT
+iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -A FORWARD -s 10.31.0.0/24  -j ACCEPT
+iptables -A FORWARD -s 10.31.1.0/24  -j ACCEPT
+iptables -A FORWARD -s 10.31.2.0/24  -j ACCEPT
+iptables -A INPUT -i eth0 -p esp -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport 500 -j ACCEPT
+iptables -A INPUT -i eth0 -p tcp --dport 500 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport 4500 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport 1701 -j ACCEPT
+iptables -A INPUT -i eth0 -p tcp --dport 1723 -j ACCEPT
+iptables -A FORWARD -j REJECT
 
-iptables -F
-iptables -t nat -F
-iptables -t mangle -F
-
-# INPUT
-
-# accept anything already accepted
-iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-
-# accept anything on the loopback interface
-iptables -A INPUT -i lo -j ACCEPT
-
-# drop invalid packets
-iptables -A INPUT -m state --state INVALID -j DROP
-
-# rate-limit repeated new requests from same IP to any ports
-iptables -I INPUT -i eth0 -m state --state NEW -m recent --set
-iptables -I INPUT -i eth0 -m state --state NEW -m recent --update --seconds 60 --hitcount 4 -j DROP
-
-# accept (non-standard) SSH
-iptables -A INPUT -p tcp --dport $SSHPORT -j ACCEPT
-
-
-# VPN
-
-# accept IPSec/NAT-T for VPN (ESP not needed with forceencaps, as ESP goes inside UDP)
-iptables -A INPUT -p udp --dport  500 -j ACCEPT
-iptables -A INPUT -p udp --dport 4500 -j ACCEPT
-
-# forward VPN traffic anywhere
-iptables -A FORWARD --match policy --pol ipsec --dir in  --proto esp -s $VPNIPPOOL -j ACCEPT
-iptables -A FORWARD --match policy --pol ipsec --dir out --proto esp -d $VPNIPPOOL -j ACCEPT
-
-# reduce MTU/MSS values for dumb VPN clients
-iptables -t mangle -A FORWARD --match policy --pol ipsec --dir in -s $VPNIPPOOL -o eth0 -p tcp -m tcp --tcp-flags SYN,RST SYN -m tcpmss --mss 1361:1536 -j TCPMSS --set-mss 1360
-
-# masquerade VPN traffic over eth0
-iptables -t nat -A POSTROUTING -s $VPNIPPOOL -o eth0 -m policy --pol ipsec --dir out -j ACCEPT  # exempt IPsec traffic from masquerading
-iptables -t nat -A POSTROUTING -s $VPNIPPOOL -o eth0 -j MASQUERADE
-
-
-# fall through to drop any other input and forward traffic
-
-iptables -A INPUT   -j DROP
-iptables -A FORWARD -j DROP
-
+iptables -t nat -A POSTROUTING -s 10.31.0.0/24 -o eth0 -j SNAT --to-source $ELASTIC_IP
+iptables -t nat -A POSTROUTING -s 10.31.1.0/24 -o eth0 -j SNAT --to-source $ELASTIC_IP
+iptables -t nat -A POSTROUTING -s 10.31.2.0/24 -o eth0 -j SNAT --to-source $ELASTIC_IP
 
 iptables -L
 /etc/init.d/iptables-persistent save
